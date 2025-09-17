@@ -14,7 +14,7 @@ from utils import (
 
 def spell_name_cool(name, style='rainbow'):
     """
-    Super cool function to spell out a name with animations, colors, and effects
+    Super cool function to spell out a name with animations, colors, and effects. Pure test to check linting.
     """
     clear_screen()
     
