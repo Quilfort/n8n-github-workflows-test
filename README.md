@@ -47,6 +47,11 @@ The two workflows are integrated to provide comprehensive notifications:
 2. The linting workflow analyzes code quality and saves results
 3. The email workflow sends both commit info and code quality metrics to n8n
 
+
+### Too keep in Mind
+
+Linting is not working as expected. This can be fixed in the future but as this was a test for n8n and GitHub Actions, it was not fixed.
+
 ## Test Project: Cool Name Speller 3000
 
 The `cool_name_speller_3000` directory contains a simple Python project that was created as part of testing this workflow. It's an ASCII art name spelling program with colorful terminal output.
