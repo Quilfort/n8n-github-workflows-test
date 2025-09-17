@@ -3,15 +3,19 @@ name: Send Commit Info to n8n
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.py" # Ignore Python files as they'll trigger the Python Linting workflow
   workflow_run:
     workflows: ["Python Linting"]
     types:
       - completed
 
+permissions:
+  contents: read
+
 jobs:
   send-to-n8n:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -31,6 +35,7 @@ jobs:
           echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
           echo "repo=$REPO_NAME" >> $GITHUB_OUTPUT
 
+      # Download lint artifacts when triggered by workflow_run
       - name: Download lint artifacts
         if: ${{ github.event_name == 'workflow_run' }}
         uses: dawidd6/action-download-artifact@v2
@@ -42,6 +47,7 @@ jobs:
           run_id: ${{ github.event.workflow_run.id }}
           path: artifacts
 
+      # Process lint results when triggered by workflow_run
       - name: Process lint results
         if: ${{ github.event_name == 'workflow_run' && steps.download.outcome == 'success' }}
         id: process-lint
@@ -61,7 +67,7 @@ jobs:
             echo "found=false" >> $GITHUB_OUTPUT
           fi
 
-      # Set lint data for workflow_run events
+      # Set lint data JSON for workflow_run events
       - name: Set lint data JSON for workflow_run
         if: ${{ github.event_name == 'workflow_run' && steps.process-lint.outputs.found == 'true' }}
         id: lint-data-workflow
@@ -75,6 +81,7 @@ jobs:
         run: |
           echo "json={\"found\": false}" >> $GITHUB_OUTPUT
 
+      # Send data to n8n webhook
       - name: Send data to n8n webhook
         uses: fjogeleit/http-request-action@v1
         with:
@@ -83,11 +90,11 @@ jobs:
           contentType: "application/json"
           data: |
             {
-              "event_type": "${{ github.event_name == 'workflow_run' && 'lint_report' || 'commit_info' }}",
+              "event_type": "${{ github.event_name == 'workflow_run' && 'commit_with_lint' || 'commit_info' }}",
               "commit_message": "${{ steps.commit-info.outputs.message }}",
               "commit_author": "${{ steps.commit-info.outputs.author }}",
               "commit_hash": "${{ steps.commit-info.outputs.hash }}",
               "repository": "${{ steps.commit-info.outputs.repo }}",
-              "triggered_at": "${{ github.event.head_commit.timestamp }}",
+              "triggered_at": "${{ github.event.head_commit.timestamp || github.event.workflow_run.updated_at }}",
               "lint_data": ${{ github.event_name == 'workflow_run' && steps.process-lint.outputs.found == 'true' && steps.lint-data-workflow.outputs.json || steps.lint-data-empty.outputs.json }}
             }

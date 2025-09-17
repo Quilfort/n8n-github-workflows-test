@@ -99,29 +99,11 @@ jobs:
           cat lint-results.json
 
       - name: Upload lint results as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: lint-results
           path: lint-results.json
           retention-days: 1
-
-      - name: Send lint results to n8n
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: ${{ secrets.N8N_WEBHOOK_URL }}
-          method: "POST"
-          contentType: "application/json"
-          data: |
-            {
-              "event_type": "python_lint_direct",
-              "repository": "${{ github.repository }}",
-              "commit_hash": "${{ github.sha }}",
-              "black_issues": ${{ steps.black.outputs.BLACK_ISSUES }},
-              "flake8_issues": ${{ steps.flake8.outputs.FLAKE8_ISSUES }},
-              "pylint_score": "${{ steps.pylint.outputs.PYLINT_SCORE }}",
-              "lint_status": "${{ steps.summary.outputs.LINT_STATUS }}",
-              "triggered_at": "${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}"
-            }
 
       - name: Comment PR with lint results
         if: github.event_name == 'pull_request'
