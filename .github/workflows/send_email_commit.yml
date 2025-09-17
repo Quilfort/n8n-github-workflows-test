@@ -1,0 +1,42 @@
+name: Send Commit Info to n8n
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  send-to-n8n:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Get commit info
+        id: commit-info
+        run: |
+          COMMIT_MESSAGE=$(git log -1 --pretty=format:%s)
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:%an)
+          COMMIT_HASH=$(git log -1 --pretty=format:%H)
+          REPO_NAME="${GITHUB_REPOSITORY}"
+
+          echo "message=$COMMIT_MESSAGE" >> $GITHUB_OUTPUT
+          echo "author=$COMMIT_AUTHOR" >> $GITHUB_OUTPUT
+          echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "repo=$REPO_NAME" >> $GITHUB_OUTPUT
+
+      - name: Send data to n8n webhook
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: ${{ secrets.N8N_WEBHOOK_URL }}
+          method: "POST"
+          contentType: "application/json"
+          data: |
+            {
+              "commit_message": "${{ steps.commit-info.outputs.message }}",
+              "commit_author": "${{ steps.commit-info.outputs.author }}",
+              "commit_hash": "${{ steps.commit-info.outputs.hash }}",
+              "repository": "${{ steps.commit-info.outputs.repo }}",
+              "triggered_at": "${{ github.event.head_commit.timestamp }}"
+            }
