@@ -1,0 +1,138 @@
+name: Python Linting
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.py"
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 pylint jq
+
+      - name: Check formatting with Black
+        id: black
+        run: |
+          BLACK_OUTPUT=$(black --check --diff . || true)
+          BLACK_EXIT_CODE=$?
+          echo "BLACK_ISSUES=$BLACK_EXIT_CODE" >> $GITHUB_OUTPUT
+          echo "BLACK_OUTPUT<<EOF" >> $GITHUB_OUTPUT
+          echo "$BLACK_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Flake8
+        id: flake8
+        run: |
+          FLAKE8_OUTPUT=$(flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || true)
+          FLAKE8_COUNT=$(echo "$FLAKE8_OUTPUT" | grep -c "^" || echo "0")
+          echo "FLAKE8_ISSUES=$FLAKE8_COUNT" >> $GITHUB_OUTPUT
+          echo "FLAKE8_OUTPUT<<EOF" >> $GITHUB_OUTPUT
+          echo "$FLAKE8_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Pylint
+        id: pylint
+        run: |
+          # Make sure the directory exists
+          if [ -d "cool_name_speller_3000" ]; then
+            PYLINT_OUTPUT=$(pylint --disable=all --enable=unused-import,undefined-variable,unused-variable,invalid-name,missing-docstring cool_name_speller_3000 || true)
+            PYLINT_SCORE=$(pylint --disable=all --enable=unused-import,undefined-variable,unused-variable,invalid-name,missing-docstring cool_name_speller_3000 2>&1 | grep -oP "(?<=rated at )[0-9]+\.[0-9]+" || echo "0.0")
+          else
+            PYLINT_OUTPUT="Directory cool_name_speller_3000 not found"
+            PYLINT_SCORE="0.0"
+          fi
+          echo "PYLINT_SCORE=$PYLINT_SCORE" >> $GITHUB_OUTPUT
+          echo "PYLINT_OUTPUT<<EOF" >> $GITHUB_OUTPUT
+          echo "$PYLINT_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate lint summary
+        id: summary
+        run: |
+          BLACK_ISSUES=${{ steps.black.outputs.BLACK_ISSUES }}
+          FLAKE8_ISSUES=${{ steps.flake8.outputs.FLAKE8_ISSUES }}
+          PYLINT_SCORE=${{ steps.pylint.outputs.PYLINT_SCORE }}
+
+          echo "LINT_SUMMARY<<EOF" >> $GITHUB_OUTPUT
+          echo "## Python Code Quality Report" >> $GITHUB_OUTPUT
+          echo "- **Black Formatting Issues:** $BLACK_ISSUES" >> $GITHUB_OUTPUT
+          echo "- **Flake8 Issues:** $FLAKE8_ISSUES" >> $GITHUB_OUTPUT
+          echo "- **Pylint Score:** $PYLINT_SCORE/10" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Calculate overall status
+          if [ "$BLACK_ISSUES" -eq "0" ] && [ "$FLAKE8_ISSUES" -eq "0" ] && (( $(echo "$PYLINT_SCORE > 7.0" | bc -l) )); then
+            echo "LINT_STATUS=PASS" >> $GITHUB_OUTPUT
+          else
+            echo "LINT_STATUS=FAIL" >> $GITHUB_OUTPUT
+          fi
+
+          # Create JSON file with lint results for artifact
+          cat > lint-results.json << EOL
+          {
+            "black_issues": $BLACK_ISSUES,
+            "flake8_issues": $FLAKE8_ISSUES,
+            "pylint_score": "$PYLINT_SCORE",
+            "lint_status": "${{ steps.summary.outputs.LINT_STATUS }}"
+          }
+          EOL
+
+          # Display the JSON for debugging
+          cat lint-results.json
+
+      - name: Upload lint results as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: lint-results
+          path: lint-results.json
+          retention-days: 1
+
+      - name: Send lint results to n8n
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: ${{ secrets.N8N_WEBHOOK_URL }}
+          method: "POST"
+          contentType: "application/json"
+          data: |
+            {
+              "event_type": "python_lint_direct",
+              "repository": "${{ github.repository }}",
+              "commit_hash": "${{ github.sha }}",
+              "black_issues": ${{ steps.black.outputs.BLACK_ISSUES }},
+              "flake8_issues": ${{ steps.flake8.outputs.FLAKE8_ISSUES }},
+              "pylint_score": "${{ steps.pylint.outputs.PYLINT_SCORE }}",
+              "lint_status": "${{ steps.summary.outputs.LINT_STATUS }}",
+              "triggered_at": "${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}"
+            }
+
+      - name: Comment PR with lint results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const summary = `${{ steps.summary.outputs.LINT_SUMMARY }}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

@@ -17,13 +17,35 @@ To use this integration, you need to set up a repository secret:
 
 This secret is used in the GitHub workflow to securely send data to your n8n instance without exposing the webhook URL in the code.
 
-## GitHub Workflow
+## GitHub Workflows
 
-The repository includes a GitHub Actions workflow file (`.github/workflows/send_email_commit.yml`) that:
+This repository includes two GitHub Actions workflows that work together:
+
+### 1. Send Commit Info (`send_email_commit.yml`)
 
 - Triggers when code is pushed to the main branch
 - Extracts information about the latest commit (message, author, hash)
 - Sends this data to your n8n webhook URL
+- Also triggers when the Python linting workflow completes, to include code quality metrics
+
+### 2. Python Linting (`python_lint.yml`)
+
+- Triggers when Python files are pushed to the main branch or in pull requests
+- Runs three code quality tools:
+  - **Black**: Checks code formatting
+  - **Flake8**: Checks for syntax errors and undefined names
+  - **Pylint**: Provides a code quality score and identifies issues
+- Saves results as artifacts for the email workflow to access
+- Adds lint results as comments on pull requests
+- Sends results directly to n8n webhook
+
+### Workflow Integration
+
+The two workflows are integrated to provide comprehensive notifications:
+
+1. When Python code is pushed, both workflows run
+2. The linting workflow analyzes code quality and saves results
+3. The email workflow sends both commit info and code quality metrics to n8n
 
 ## Test Project: Cool Name Speller 3000
 

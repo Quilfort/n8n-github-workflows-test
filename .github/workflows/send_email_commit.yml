@@ -3,10 +3,15 @@ name: Send Commit Info to n8n
 on:
   push:
     branches: [main]
+  workflow_run:
+    workflows: ["Python Linting"]
+    types:
+      - completed
 
 jobs:
   send-to-n8n:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -26,6 +31,50 @@ jobs:
           echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
           echo "repo=$REPO_NAME" >> $GITHUB_OUTPUT
 
+      - name: Download lint artifacts
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: dawidd6/action-download-artifact@v2
+        id: download
+        continue-on-error: true
+        with:
+          workflow: python_lint.yml
+          name: lint-results
+          run_id: ${{ github.event.workflow_run.id }}
+          path: artifacts
+
+      - name: Process lint results
+        if: ${{ github.event_name == 'workflow_run' && steps.download.outcome == 'success' }}
+        id: process-lint
+        run: |
+          if [ -f "artifacts/lint-results.json" ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            BLACK_ISSUES=$(jq -r '.black_issues' artifacts/lint-results.json)
+            FLAKE8_ISSUES=$(jq -r '.flake8_issues' artifacts/lint-results.json)
+            PYLINT_SCORE=$(jq -r '.pylint_score' artifacts/lint-results.json)
+            LINT_STATUS=$(jq -r '.lint_status' artifacts/lint-results.json)
+            
+            echo "black_issues=$BLACK_ISSUES" >> $GITHUB_OUTPUT
+            echo "flake8_issues=$FLAKE8_ISSUES" >> $GITHUB_OUTPUT
+            echo "pylint_score=$PYLINT_SCORE" >> $GITHUB_OUTPUT
+            echo "lint_status=$LINT_STATUS" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Set lint data for workflow_run events
+      - name: Set lint data JSON for workflow_run
+        if: ${{ github.event_name == 'workflow_run' && steps.process-lint.outputs.found == 'true' }}
+        id: lint-data-workflow
+        run: |
+          echo "json={\"found\": true, \"black_issues\": ${{ steps.process-lint.outputs.black_issues }}, \"flake8_issues\": ${{ steps.process-lint.outputs.flake8_issues }}, \"pylint_score\": \"${{ steps.process-lint.outputs.pylint_score }}\", \"lint_status\": \"${{ steps.process-lint.outputs.lint_status }}\"}" >> $GITHUB_OUTPUT
+
+      # Set empty lint data for push events
+      - name: Set empty lint data JSON for push
+        if: ${{ github.event_name != 'workflow_run' || steps.process-lint.outputs.found != 'true' }}
+        id: lint-data-empty
+        run: |
+          echo "json={\"found\": false}" >> $GITHUB_OUTPUT
+
       - name: Send data to n8n webhook
         uses: fjogeleit/http-request-action@v1
         with:
@@ -34,9 +83,11 @@ jobs:
           contentType: "application/json"
           data: |
             {
+              "event_type": "${{ github.event_name == 'workflow_run' && 'lint_report' || 'commit_info' }}",
               "commit_message": "${{ steps.commit-info.outputs.message }}",
               "commit_author": "${{ steps.commit-info.outputs.author }}",
               "commit_hash": "${{ steps.commit-info.outputs.hash }}",
               "repository": "${{ steps.commit-info.outputs.repo }}",
-              "triggered_at": "${{ github.event.head_commit.timestamp }}"
+              "triggered_at": "${{ github.event.head_commit.timestamp }}",
+              "lint_data": ${{ github.event_name == 'workflow_run' && steps.process-lint.outputs.found == 'true' && steps.lint-data-workflow.outputs.json || steps.lint-data-empty.outputs.json }}
             }
